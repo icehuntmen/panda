@@ -17,6 +17,7 @@ var startTime time.Time
 
 
 // Parameters from flag.
+var mess string
 var accountToken string
 var username string
 var password string
@@ -141,6 +142,7 @@ func main() {
 		logInfo("Logging in with bot account token...")
 		session, err = discordgo.New(accountToken)
 	}
+
 	setupHandlers(session)
 	panicOnErr(err)
 	logInfo("Opening session...")
@@ -150,25 +152,38 @@ func main() {
 	<-make(chan struct{})
 }
 
+
+
 func setupHandlers(session *discordgo.Session) {
 	logInfo("Setting up event handlers...")
 
-	session.AddHandler(func(sess *discordgo.Session, evt *discordgo.MessageCreate) {
+	session.AddHandler(func(s *discordgo.Session, evt *discordgo.MessageCreate) {
 		//message := evt.Message
 
-		if evt.Author.ID == sess.State.User.ID {
+		logDebug("PRESENSE UPDATE:", evt.Content);
+		logDebug("PRESENSE EVT:", evt.Author.ID);
+		logDebug("PRESENSE SESS:", s.State.User.ID);
+
+
+		if evt.Author.ID == s.State.User.ID {
 			return
 		}
+		mess = evt.ChannelID
 		// If the message is "ping" reply with "Pong!"
 		if evt.Content == "ping" {
-			sess.ChannelMessageSend(evt.ChannelID, "Pong!")
+			logDebug("PRESENSE CHANNEL PING:", mess);
+			s.ChannelMessageSendTTS(evt.ChannelID, "Pong!")
 		}
 
 		// If the message is "pong" reply with "Ping!"
 		if evt.Content == "pong" {
-			sess.ChannelMessageSend(evt.ChannelID, "Ping!")
+			logDebug("PRESENSE CHANNEL PONG:", mess);
+			s.ChannelMessageSendTTS(evt.ChannelID, "Ping!")
 		}
-		/*
+
+
+
+/*
 		switch strings.ToLower(strings.TrimSpace(message.Content)) {
 		case "!uptime":
 			hostname, err := os.Hostname()
@@ -187,24 +202,27 @@ func setupHandlers(session *discordgo.Session) {
 
 	session.AddHandler(func(sess *discordgo.Session, evt *discordgo.PresenceUpdate) {
 		logDebug("PRESENSE UPDATE fired for user-ID:", evt.User.ID)
-		self := fetchUser(sess, "@me")
-		u := fetchUser(sess, evt.User.ID)
+		fmt.Println(evt.User, evt.User.ID)
+		//self := fetchUser(sess, "@everyone")
+
+		//u := fetchUser(sess, evt.User.ID)
 		// Ignore self
+		/*
 		if u.ID == self.ID || u.Bot {
 			return
 		}
 		// Handle online/offline notifications
 		if evt.Status == "offline" {
-			if _, ok := usersOnline[u.ID]; ok {
-				delete(usersOnline, u.ID)
-				sendMessage(sess, fmt.Sprintf(`**%s** went offline`, u.Username))
+			if _, ok := usersOnline[evt.User.ID]; ok {
+				delete(usersOnline, evt.User.ID)
+				sendMessage(sess, fmt.Sprintf(`**%s** went offline`, evt.User.Username))
 			}
 		} else {
-			if _, ok := usersOnline[u.ID]; !ok {
-				usersOnline[u.ID] = struct{}{}
-				sendMessage(sess, fmt.Sprintf(`**%s** is now online`, u.Username))
+			if _, ok := usersOnline[evt.User.ID]; !ok {
+				usersOnline[evt.User.ID] = struct{}{}
+				sendMessage(sess, fmt.Sprintf(`**%s** is now online`, evt.User.Username))
 			}
-		}
+		}*/
 	})
 
 	session.AddHandler(func(sess *discordgo.Session, evt *discordgo.GuildCreate) {

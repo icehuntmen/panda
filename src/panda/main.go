@@ -1,236 +1,50 @@
 package main
 
 import (
-	"errors"
-	"flag"
-	"fmt"
-	"log"
-	"os"
-	"strings"
-	"time"
+
+	"io/ioutil"
+	"encoding/json"
+
 	"github.com/bwmarrin/discordgo"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
-var logger *log.Logger
-var usersOnline map[string]struct{}
-var startTime time.Time
+type JsonObject struct {
 
+	Token string
+	TokenKey string
+	BotId int
 
-// Parameters from flag.
-var mess string
-var accountToken string
-var username string
-var password string
-
-func init() {
-	// Create initials.
-	usersOnline = make(map[string]struct{})
-	logger = log.New(os.Stderr, "  ", log.Ldate|log.Ltime)
-	startTime = time.Now()
-
-	// Parse command line arguments.
-	flag.StringVar(&accountToken, "t", "", "Bot account token")
-	flag.StringVar(&username, "u", "", "Account username")
-	flag.StringVar(&password, "p", "", "Account password")
-	flag.Parse()
-	if accountToken == "" && (username == "" || password == "") {
-		flag.PrintDefaults()
-		os.Exit(1)
-	}
 }
 
-func logDebug(v ...interface{}) {
-	logger.SetPrefix("DEBUG ")
-	logger.Println(v...)
-}
+var config JsonObject
 
-func logInfo(v ...interface{}) {
-	logger.SetPrefix("INFO  ")
-	logger.Println(v...)
-}
+func main()  {
 
-func panicOnErr(err error) {
-	if err != nil {
-		panic(err)
-	}
-}
-
-/* Tries to call a method and checking if the method returned an error, if it
-did check to see if it's HTTP 502 from the Discord API and retry for
-`attempts` number of times. */
-func retryOnBadGateway(f func() error) {
-	var err error
-	for i := 0; i < 3; i++ {
-		err = f()
-		if err != nil {
-			if strings.HasPrefix(err.Error(), "HTTP 502") {
-				// If the error is Bad Gateway, try again after 1 sec.
-				time.Sleep(1 * time.Second)
-				continue
-			} else {
-				// Otherwise panic !
-				panicOnErr(err)
-			}
-		} else {
-			// In case of no error, return.
-			return
-		}
-	}
-}
-
-func fetchUser(sess *discordgo.Session, userid string) *discordgo.User {
-	var result *discordgo.User
-	retryOnBadGateway(func() error {
-		var err error
-		result, err = sess.User(userid)
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	return result
-}
-
-func fetchPrimaryTextChannelID(sess *discordgo.Session) string {
-	var channelid string
-
-	retryOnBadGateway(func() error {
-		guilds, err := sess.UserGuilds(10,"","")
-		if err != nil {
-			return err
-		}
-		guild, err := sess.Guild(guilds[0].ID)
-		if err != nil {
-			return err
-		}
-		channels, err := sess.GuildChannels(guild.ID)
-		if err != nil {
-			return err
-		}
-		for _, channel := range channels {
-			channel, err = sess.Channel(channel.ID)
-			if err != nil {
-				return err
-			}
-			if channel.Type == "text" {
-				channelid = channel.ID
-				return nil
-			}
-		}
-		return errors.New("No primary channel found")
-	})
-	return channelid
-}
-
-func sendMessage(sess *discordgo.Session, message string) {
-	channelid := fetchPrimaryTextChannelID(sess)
-	logInfo("SENDING MESSAGE:", message)
-	retryOnBadGateway(func() error {
-		_, err := sess.ChannelMessageSend(channelid, message)
-		return err
-	})
-}
-
-func main() {
-	logInfo("Logging in...")
-	var err error
-	var session *discordgo.Session
-	if accountToken == "" {
-		logInfo("Logging in with username and password...")
-		session, err = discordgo.New(username, password)
-	} else {
-		logInfo("Logging in with bot account token...")
-		session, err = discordgo.New(accountToken)
+	// Read json config file
+	file, e := ioutil.ReadFile("./config.json")
+	panicOnErr(e)
+	//
+	json.Unmarshal(file,&config)
+	if config.TokenKey == "" {
+		logError("No token provided. Please set token in to config.json")
+		return
 	}
 
-	setupHandlers(session)
+	discord, err := discordgo.New(config.TokenKey)
 	panicOnErr(err)
-	logInfo("Opening session...")
-	err = session.Open()
+
+	err = discord.Open()
 	panicOnErr(err)
-	logInfo("Sleeping...")
-	<-make(chan struct{})
-}
 
+	logSystem("Panda Bot is now running.  Press CTRL-C to exit.")
 
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
+	<-sc
 
-func setupHandlers(session *discordgo.Session) {
-	logInfo("Setting up event handlers...")
-
-	session.AddHandler(func(s *discordgo.Session, evt *discordgo.MessageCreate) {
-		//message := evt.Message
-
-		logDebug("PRESENSE UPDATE:", evt.Content);
-		logDebug("PRESENSE EVT:", evt.Author.ID);
-		logDebug("PRESENSE SESS:", s.State.User.ID);
-
-
-		if evt.Author.ID == s.State.User.ID {
-			return
-		}
-		mess = evt.ChannelID
-		// If the message is "ping" reply with "Pong!"
-		if evt.Content == "ping" {
-			logDebug("PRESENSE CHANNEL PING:", mess);
-			s.ChannelMessageSendTTS(evt.ChannelID, "Pong!")
-		}
-
-		// If the message is "pong" reply with "Ping!"
-		if evt.Content == "pong" {
-			logDebug("PRESENSE CHANNEL PONG:", mess);
-			s.ChannelMessageSendTTS(evt.ChannelID, "Ping!")
-		}
-
-
-
-/*
-		switch strings.ToLower(strings.TrimSpace(message.Content)) {
-		case "!uptime":
-			hostname, err := os.Hostname()
-			panicOnErr(err)
-			duration := time.Now().Sub(startTime)
-			sendMessage(sess, fmt.Sprintf(
-				"Uptime is: **%02d:%02d:%02d** (since **%s**) on **%s**",
-				int(duration.Hours()),
-				int(duration.Minutes())%60,
-				int(duration.Seconds())%60,
-				startTime.Format(time.Stamp),
-				hostname))
-		}
-		*/
-	})
-
-	session.AddHandler(func(sess *discordgo.Session, evt *discordgo.PresenceUpdate) {
-		logDebug("PRESENSE UPDATE fired for user-ID:", evt.User.ID)
-		fmt.Println(evt.User, evt.User.ID)
-		//self := fetchUser(sess, "@everyone")
-
-		//u := fetchUser(sess, evt.User.ID)
-		// Ignore self
-		/*
-		if u.ID == self.ID || u.Bot {
-			return
-		}
-		// Handle online/offline notifications
-		if evt.Status == "offline" {
-			if _, ok := usersOnline[evt.User.ID]; ok {
-				delete(usersOnline, evt.User.ID)
-				sendMessage(sess, fmt.Sprintf(`**%s** went offline`, evt.User.Username))
-			}
-		} else {
-			if _, ok := usersOnline[evt.User.ID]; !ok {
-				usersOnline[evt.User.ID] = struct{}{}
-				sendMessage(sess, fmt.Sprintf(`**%s** is now online`, evt.User.Username))
-			}
-		}*/
-	})
-
-	session.AddHandler(func(sess *discordgo.Session, evt *discordgo.GuildCreate) {
-		logInfo("GUILD_CREATE event fired")
-		for _, presence := range evt.Presences {
-			user := presence.User
-			logInfo("Marked user-ID online:", user.ID)
-			usersOnline[user.ID] = struct{}{}
-		}
-	})
+	// Cleanly close down the Discord session.
+	discord.Close()
 }
